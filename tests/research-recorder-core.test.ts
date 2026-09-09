@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { clockShift, normalizeRecorderConfig, sessionName, wavHeader } from '../research-recorder-core.mjs';
 
 test('recorder defaults preserve analysis-ready capture quality', () => {
-  const config = normalizeRecorderConfig();
-  assert.equal(config.storageRoot, 'F:\\research-recordings');
+  const config = normalizeRecorderConfig({}, '/Users/test/Documents');
+  assert.equal(config.storageRoot, '/Users/test/Documents/research-recordings');
   assert.deepEqual(config.camera, { width: 1280, height: 720, frameRate: 30 });
   assert.deepEqual(config.audio, { sampleRate: 48000, channels: 1, bitsPerSample: 16 });
   assert.equal(config.segmentMs, 600000);

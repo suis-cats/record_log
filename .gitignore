@@ -1,4 +1,8 @@
 node_modules/
 dist/
 release/
+bin/
+*.zip
+*.dmg
+research-recordings/
 *.log

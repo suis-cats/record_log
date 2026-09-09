@@ -1,20 +1,14 @@
-# 研究レコーダー
+# macOS実機検証手順
 
-`Start-Research-Recorder.cmd` は、分析を行わず研究用の原データだけを記録する独立アプリを起動する。既存の Conversation Return Lab と同時には使用しない。
+1. OBSでWebSocket v5、MKV録画、画面用シーン、実カメラだけのVirtual Camera出力を設定し、ActivityWatchのwindow/AFK watcherを起動する。
+2. Research Recorderへカメラ、マイク、Accessibilityを許可し、OBS Virtual Cameraと対象マイクを選ぶ。
+3. 設定保存後、すべての系統が「データ保存中」になったことを確認する。権限取得前に記録中にならないことも確認する。
+4. 11分以上記録し、途中でウィンドウを閉じる。再表示後も経過時間とファイル増加が継続していることを確認する。
+5. ActivityWatchまたは機器を一時切断し、他系統が継続すること、欠落開始・終了と再接続が保存されることを確認する。
+6. 「停止して保存」後に再開しないこと、WAV・WebM・MKVが確定することを確認する。
+7. ffprobeでWAVが48000Hz、mono、pcm_s16leであること、WebMとMKVが再生可能であること、10分境界前後の時間差を確認する。
+8. JSONL、CSV、session.jsonと診断ログにキー内容・キーコード・入力文字列・クリップボードが存在しないことを確認する。
+9. プロセス一覧にWhisper、Silero、顔解析、VAD、会話・作業復帰判定がないことを確認する。
+10. 強制終了用セッションを作り、次回起動後も残存ファイルが保全され、recovery-*.jsonが作られることを確認する。
 
-## 記録内容
-
-- `obs/`: OBSの現在シーンをMKVで記録する。アプリが開始した録画だけを停止する。
-- `camera/`: OBS Virtual Cameraを720p・30fpsでWebMに記録する。
-- `audio/`: 選択マイクを48kHz・mono・16bit PCM WAVに記録する。
-- `raw/`: ActivityWatchと、キーの内容を含まない入力操作時刻をJSONL/CSVで記録する。
-- `session.json`: 全ファイルのUTC区間、メディア時間、取得形式、完了状態をまとめる。
-- `events.jsonl`: 接続、分割、欠落、時計変更を追記する。
-
-各メディアは10分ごとに分割する。停止時に会話検出、顔解析、Silero、Whisper、作業復帰分析は実行しない。ウィンドウを閉じてもトレイで記録は続く。
-
-## 起動条件
-
-OBSとActivityWatchを先に起動する。OBS WebSocketのパスワードは初回だけ画面で入力する。別のOBS録画が動いている場合は停止せず待機する。OBS Virtual Cameraはアプリが必要に応じて開始する。
-
-既定の保存先は `F:\research-recordings`。空き容量が10 GiB未満になると保存可能なファイルを確定して停止する。
+OBSまたはActivityWatch本体はResearch Recorder終了後も動作を継続します。OBS接続が切れて所有権を確認できない場合、録画停止を送りません。

@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && vite build",
+    "build:swift": "zsh scripts/build-swift-helper.sh",
     "test": "tsx --test tests/*.test.ts",
-    "check": "npm test && npm run build && node --check recorder-electron.mjs && node --check recorder-preload.cjs",
-    "recorder": "npm run build && electron recorder-electron.mjs",
-    "package:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-recorder-portable.ps1"
+    "check": "npm test && npm run build && npm run build:swift && node --check recorder-electron.mjs && node --check recorder-preload.cjs",
+    "recorder": "npm run build:swift && npm run build && electron recorder-electron.mjs",
+    "package:mac:arm64": "npm run check && electron-builder --mac zip --arm64"
   },
   "dependencies": {
     "ffmpeg-static": "^5.3.0",
@@ -16,8 +17,31 @@
   },
   "devDependencies": {
     "electron": "^44.1.1",
+    "electron-builder": "^26.0.20",
     "tsx": "^4.23.13",
     "typescript": "^5.9.2",
     "vite": "^8.2.2"
+  },
+  "main": "recorder-electron.mjs",
+  "build": {
+    "appId": "jp.suis.research-recorder",
+    "productName": "Research Recorder",
+    "asar": true,
+    "files": ["dist/**", "recorder-electron.mjs", "recorder-preload.cjs", "research-recorder-core.mjs", "raw-study.mjs", "package.json"],
+    "extraResources": [
+      {"from": "bin/input-collector-macos", "to": "bin/input-collector-macos"},
+      {"from": "node_modules/ffmpeg-static/ffmpeg", "to": "bin/ffmpeg"}
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": ["zip"],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSCameraUsageDescription": "OBS Virtual Cameraの研究用生映像を保存します。",
+        "NSMicrophoneUsageDescription": "選択したマイクの研究用生音声を保存します。",
+        "NSAppleEventsUsageDescription": "OBSとActivityWatchを起動するために使用します。"
+      }
+    }
   }
 }
