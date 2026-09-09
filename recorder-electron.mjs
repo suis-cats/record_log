@@ -1017,7 +1017,7 @@ ipcMain.handle("recorder:run-diagnostics", async () => {
   })();
   const accessibility = await probeInputHelper();
   const input = await new Promise((resolve) => {
-    if (!accessibility) return resolve({ ok: false, message: "Accessibility権限がありません", detail: {} });
+    if (!accessibility) return resolve({ ok: false, message: "CGEventTapを作成できません。Accessibilityと入力監視を確認してください", detail: { accessibilitySettings: "プライバシーとセキュリティ → アクセシビリティ", inputMonitoringSettings: "プライバシーとセキュリティ → 入力監視" } });
     const child = spawn(helperPath, [], { stdio: ["ignore", "pipe", "pipe"] });
     const counts = { heartbeat: 0, keydown: 0, click: 0, scroll: 0, movement: 0 };
     let buffer = "", stderr = "", done = false;
