@@ -929,6 +929,44 @@ async function recover() {
   }
 }
 ipcMain.handle("recorder:get-status", () => pub());
+ipcMain.handle("recorder:run-diagnostics", async () => {
+  if (["recording", "starting", "stopping"].includes(state.state))
+    throw new Error("記録中は事前テストを実行できません");
+  const checkedAt = new Date().toISOString();
+  const activitywatch = await (async () => {
+    try {
+      const buckets = await aw("/buckets");
+      const ids = Object.keys(buckets).filter((id) => /aw-watcher-(window|afk)/.test(id));
+      const detail = {};
+      for (const id of ids) {
+        const q = new URLSearchParams({ starttime: new Date(Date.now() - 120_000).toISOString(), endtime: new Date().toISOString(), limit: "1" });
+        const rows = await aw(`/buckets/${encodeURIComponent(id)}/events?${q}`);
+        detail[/window/.test(id) ? "window" : "afk"] = { bucketId: id, recentEvent: Array.isArray(rows) && rows.length > 0, latestTimestamp: rows?.[0]?.timestamp ?? null };
+      }
+      return { ok: Boolean(detail.window?.recentEvent && detail.afk?.recentEvent), message: detail.window && detail.afk ? "window/AFK watcherへ接続しました" : "windowまたはAFK watcherが見つかりません", detail };
+    } catch (error) { return { ok: false, message: String(error), detail: {} }; }
+  })();
+  const obs = await (async () => {
+    try {
+      const version = await obsRequest("GetVersion"), record = await obsRequest("GetRecordStatus");
+      const format = String(await profile("RecFormat2").catch(() => profile("RecFormat"))).toLowerCase();
+      return { ok: format === "mkv" && !record.outputActive, message: record.outputActive ? "既存のOBS録画が動作中です" : format === "mkv" ? "OBS WebSocket接続・MKV設定を確認しました" : `録画形式は${format}です（MKVが必要）`, detail: { websocketVersion: version.obsWebSocketVersion ?? null, obsVersion: version.obsVersion ?? null, recordActive: Boolean(record.outputActive), recordFormat: format } };
+    } catch (error) { return { ok: false, message: String(error), detail: {} }; }
+  })();
+  const accessibility = systemPreferences.isTrustedAccessibilityClient(false);
+  const input = await new Promise((resolve) => {
+    if (!accessibility) return resolve({ ok: false, message: "Accessibility権限がありません", detail: {} });
+    const child = spawn(helperPath, [], { stdio: ["ignore", "pipe", "pipe"] });
+    const counts = { heartbeat: 0, keydown: 0, click: 0, scroll: 0, movement: 0 };
+    let buffer = "", stderr = "", done = false;
+    const finish = (message) => { if (done) return; done = true; child.kill("SIGTERM"); resolve({ ok: counts.heartbeat > 0, message, detail: { counts } }); };
+    child.stdout.on("data", (chunk) => { buffer += chunk; const lines = buffer.split("\n"); buffer = lines.pop(); for (const line of lines) try { const row = JSON.parse(line); if (Object.hasOwn(counts, row.type)) counts[row.type]++; } catch {} });
+    child.stderr.on("data", (chunk) => (stderr += String(chunk).slice(0, 500)));
+    child.once("close", () => finish(stderr || "操作ログヘルパーが早期終了しました"));
+    setTimeout(() => finish("5秒間のheartbeatと操作イベントを確認しました"), 5000);
+  });
+  return { checkedAt, activitywatch, obs, input, accessibility };
+});
 ipcMain.handle("recorder:save-config", async (_e, v) => {
   if (state.state === "recording")
     throw new Error("記録中は設定を変更できません");

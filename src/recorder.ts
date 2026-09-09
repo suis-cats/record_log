@@ -8,7 +8,7 @@ const api = window.researchRecorder,
   $ = <T extends HTMLElement = HTMLElement>(id: string) =>
     document.getElementById(id) as T;
 document.querySelector("#app")!.innerHTML =
-  `<main><header><div><span class="eyebrow">RAW DATA CAPTURE · macOS</span><h1>研究レコーダー</h1><p class="muted">分析を行わず、研究用の原データだけを保存します。</p></div><div><div class="statusline" id="overall">準備中</div><div class="muted" id="elapsed">00:00:00</div></div></header><section class="hero"><div class="preview"><video id="preview" autoplay muted playsinline></video></div><div class="cards" id="cards"></div></section><div class="toolbar"><button class="primary" id="start">記録開始</button><button id="stop">停止して保存</button><button id="folder">保存先を開く</button><button class="danger" id="quit">終了</button></div><section class="panel"><h2>記録設定</h2><div class="settings"><label>参加者ID<input id="participant"></label><label>マイク<select id="microphone"></select></label><label class="wide">保存先<input id="storage"></label><label>カメラ<select id="camera"></select></label><label>OBS WebSocketパスワード<input id="obsPassword" type="password" placeholder="変更時のみ入力"></label></div><div class="toolbar"><button id="permissions">カメラ・マイクを許可</button><button id="save">設定を保存</button><span class="muted" id="message"></span></div><p class="muted">操作ログにはキー内容・キーコード・入力文字列・クリップボードを保存しません。Accessibilityはシステム設定の「プライバシーとセキュリティ」で許可します。</p></section><section class="panel"><h2>音声レベル</h2><div class="meter"><i id="level"></i></div></section><section class="panel"><h2>記録イベント</h2><div class="events" id="events"></div></section></main>`;
+  `<main><header><div><span class="eyebrow">RAW DATA CAPTURE · macOS</span><h1>研究レコーダー</h1><p class="muted">分析を行わず、研究用の原データだけを保存します。</p></div><div><div class="statusline" id="overall">準備中</div><div class="muted" id="elapsed">00:00:00</div></div></header><nav><button class="tab active" data-page="record">記録</button><button class="tab" data-page="test">計測前テスト</button></nav><div id="recordPage"><section class="hero"><div class="preview"><video id="preview" autoplay muted playsinline></video></div><div class="cards" id="cards"></div></section><div class="toolbar"><button class="primary" id="start">記録開始</button><button id="stop">停止して保存</button><button id="folder">保存先を開く</button><button class="danger" id="quit">終了</button></div><section class="panel"><h2>記録設定</h2><div class="settings"><label>参加者ID<input id="participant"></label><label>マイク<select id="microphone"></select></label><label class="wide">保存先<input id="storage"></label><label>カメラ<select id="camera"></select></label><label>OBS WebSocketパスワード<input id="obsPassword" type="password" placeholder="変更時のみ入力"></label></div><div class="toolbar"><button id="permissions">カメラ・マイクを許可</button><button id="save">設定を保存</button><span class="muted" id="message"></span></div><p class="muted">操作ログにはキー内容・キーコード・入力文字列・クリップボードを保存しません。Accessibilityはシステム設定の「プライバシーとセキュリティ」で許可します。</p></section><section class="panel"><h2>音声レベル</h2><div class="meter"><i id="level"></i></div></section><section class="panel"><h2>記録イベント</h2><div class="events" id="events"></div></section></div><div id="testPage" hidden><section class="panel"><h2>計測前テスト</h2><p class="muted">セッションを開始せず、入力が届くか確認します。映像・音声・結果は保存されません。操作ログ確認中の5秒間にキー入力、クリック、スクロール、マウス移動を行ってください。</p><div class="toolbar"><button class="primary" id="runTest">すべてテスト</button><button id="stopTest" disabled>メディアテスト停止</button><span class="muted" id="testMessage">未実行</span></div></section><section class="test-grid"><div class="panel test-card"><h2>OBS画面録画</h2><strong id="testObs">未実行</strong><pre id="testObsDetail"></pre></div><div class="panel test-card"><h2>ActivityWatch</h2><strong id="testAw">未実行</strong><pre id="testAwDetail"></pre></div><div class="panel test-card"><h2>操作ログ</h2><strong id="testInput">未実行</strong><pre id="testInputDetail"></pre></div><div class="panel test-card"><h2>OBS Virtual Camera</h2><strong id="testCamera">未実行</strong><video id="testPreview" autoplay muted playsinline></video><pre id="testCameraDetail"></pre></div><div class="panel test-card"><h2>マイク</h2><strong id="testMic">未実行</strong><div class="meter"><i id="testLevel"></i></div><pre id="testMicDetail"></pre></div></section></div></main>`;
 let cameraStream: MediaStream | null = null,
   audioStream: MediaStream | null = null,
   recorder: MediaRecorder | null = null,
@@ -22,6 +22,10 @@ let cameraStream: MediaStream | null = null,
   activeMicId: string | null = null,
   activeSegmentMs = 600_000,
   cameraChunkQueue: Promise<unknown> = Promise.resolve();
+let testCameraStream: MediaStream | null = null,
+  testAudioStream: MediaStream | null = null,
+  testAudioContext: AudioContext | null = null,
+  testMeterFrame = 0;
 const reconnectTimers: Record<"camera" | "audio", number | null> = {
   camera: null,
   audio: null,
@@ -430,6 +434,63 @@ $("start").onclick = () => api.start();
 $("stop").onclick = () => api.stop();
 $("quit").onclick = () => api.quit();
 $("folder").onclick = () => api.openFolder();
+function testResult(id: string, result: any) {
+  $(id).textContent = `${result.ok ? "✓" : "✕"} ${result.message}`;
+  $(id).className = result.ok ? "ok" : "bad";
+  $(`${id}Detail`).textContent = JSON.stringify(result.detail ?? {}, null, 2);
+}
+async function stopMediaTest() {
+  cancelAnimationFrame(testMeterFrame);
+  testCameraStream?.getTracks().forEach((track) => track.stop());
+  testAudioStream?.getTracks().forEach((track) => track.stop());
+  await testAudioContext?.close().catch(() => {});
+  testCameraStream = testAudioStream = null;
+  testAudioContext = null;
+  $<HTMLVideoElement>("testPreview").srcObject = null;
+  $<HTMLButtonElement>("stopTest").disabled = true;
+}
+async function runMediaTest() {
+  await stopMediaTest();
+  const d = await devices(), cameraId = $<HTMLSelectElement>("camera").value || d.cams[0]?.deviceId, micId = $<HTMLSelectElement>("microphone").value || d.mics[0]?.deviceId;
+  try {
+    if (!cameraId) throw new Error("OBS Virtual Cameraが見つかりません");
+    testCameraStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: cameraId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }, audio: false });
+    $<HTMLVideoElement>("testPreview").srcObject = testCameraStream;
+    testResult("testCamera", { ok: true, message: "映像を受信中", detail: testCameraStream.getVideoTracks()[0].getSettings() });
+  } catch (error) { testResult("testCamera", { ok: false, message: String(error), detail: {} }); }
+  try {
+    if (!micId) throw new Error("マイクが見つかりません");
+    testAudioStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: micId }, channelCount: 1, sampleRate: 48000, echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false });
+    testAudioContext = new AudioContext({ sampleRate: 48000 });
+    const source = testAudioContext.createMediaStreamSource(testAudioStream), analyser = testAudioContext.createAnalyser(), values = new Float32Array(analyser.fftSize);
+    source.connect(analyser);
+    const draw = () => { analyser.getFloatTimeDomainData(values); let sum = 0; for (const value of values) sum += value * value; $("testLevel").style.width = `${Math.min(100, Math.sqrt(sum / values.length) * 500)}%`; testMeterFrame = requestAnimationFrame(draw); };
+    draw();
+    const settings = testAudioStream.getAudioTracks()[0].getSettings();
+    testResult("testMic", { ok: settings.sampleRate === 48000 && settings.channelCount === 1, message: "音声レベルを受信中", detail: { ...settings, audioContextSampleRate: testAudioContext.sampleRate } });
+  } catch (error) { testResult("testMic", { ok: false, message: String(error), detail: {} }); }
+  $<HTMLButtonElement>("stopTest").disabled = !(testCameraStream || testAudioStream);
+}
+$<HTMLButtonElement>("runTest").onclick = async () => {
+  const button = $<HTMLButtonElement>("runTest");
+  button.disabled = true;
+  $("testMessage").textContent = "5秒間テスト中…操作してください";
+  for (const id of ["testObs", "testAw", "testInput", "testCamera", "testMic"]) { $(id).textContent = "確認中…"; $(id).className = "warn"; }
+  await runMediaTest();
+  try {
+    const result = await api.runDiagnostics();
+    testResult("testObs", result.obs); testResult("testAw", result.activitywatch); testResult("testInput", result.input);
+    $("testMessage").textContent = `完了: ${new Date(result.checkedAt).toLocaleTimeString()}`;
+  } catch (error) { $("testMessage").textContent = String(error); }
+  button.disabled = false;
+};
+$<HTMLButtonElement>("stopTest").onclick = stopMediaTest;
+document.querySelectorAll<HTMLButtonElement>(".tab").forEach((button) => button.onclick = async () => {
+  const test = button.dataset.page === "test";
+  $("recordPage").hidden = test; $("testPage").hidden = !test;
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === button));
+  if (!test) await stopMediaTest();
+});
 void (async () => {
   const s = await api.getStatus();
   $<HTMLInputElement>("participant").value = s.config.participantId;

@@ -65,3 +65,7 @@ arm64成果物にはarm64のSwiftヘルパーとFFmpegを同梱し、Homebrewや
 生成ZIP: dist/Research Recorder-1.0.0-arm64-mac.zip
 
 手動検証手順は docs/research-recorder.md にあります。
+
+### 計測前テスト
+
+画面上部の「計測前テスト」では、研究セッションを作らずにOBS WebSocketとMKV設定、ActivityWatchのwindow/AFKイベント、Accessibility操作ログ、OBS Virtual Camera映像、選択マイクのレベルと取得品質を確認できる。「すべてテスト」の実行中にキー入力、クリック、スクロール、マウス移動を行い、各欄が緑のチェックになることを確認する。テスト映像・音声・操作イベントは保存されない。「メディアテスト停止」または「記録」タブへ戻るとテスト用ストリームを解放する。
