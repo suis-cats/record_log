@@ -488,7 +488,7 @@ $<HTMLButtonElement>("allowAccessibility").onclick = async () => {
   const result = await api.requestAccessibility();
   $("testMessage").textContent = result.granted
     ? "Accessibility権限を確認しました。テストを再実行してください"
-    : `システム設定でこのアプリをオンにしてください: ${result.appPath}`;
+    : `Accessibility=${result.accessibility ? "許可" : "未許可"} / 入力監視=${result.inputMonitoring ? "許可" : "未許可"}。Research Recorderを両方でオンにして再起動してください: ${result.appPath}`;
 };
 $<HTMLButtonElement>("stopTest").onclick = stopMediaTest;
 document.querySelectorAll<HTMLButtonElement>(".tab").forEach((button) => button.onclick = async () => {

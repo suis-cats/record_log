@@ -40,8 +40,8 @@ test('reconnect backoff is capped',()=>{assert.equal(reconnectDelay(0),1000);ass
 test('macOS input helper never accesses key or clipboard data',async()=>{
   const source=await readFile(new URL('../swift/InputCollector.swift',import.meta.url),'utf8');
   for(const forbidden of ['keyboardEventKeycode','keyboardGetUnicodeString','CGEventKeyboardGetUnicodeString','NSPasteboard'])assert.equal(source.includes(forbidden),false);
-  assert.equal(source.includes('AXIsProcessTrusted()'),false);
-  assert.ok(source.indexOf('CGEvent.tapCreate') < source.indexOf('emit("permission",["granted":true])'));
+  assert.ok(source.indexOf('CGEvent.tapCreate') < source.indexOf('emit("permission",["granted":true'));
+  assert.ok(source.includes('CGRequestListenEventAccess()'));
 });
 
 test('recorder does not start analysis models',async()=>{
