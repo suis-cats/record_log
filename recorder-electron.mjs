@@ -586,8 +586,26 @@ async function closeAudio() {
     mediaDurationMs: samples / 48,
   });
 }
+async function probeInputHelper() {
+  return new Promise((resolve) => {
+    const child = spawn(helperPath, [], { stdio: ["ignore", "pipe", "ignore"] });
+    let buffer = "", settled = false;
+    const finish = (value) => { if (settled) return; settled = true; child.kill("SIGTERM"); resolve(value); };
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split("\n"); buffer = lines.pop();
+      for (const line of lines) try {
+        const row = JSON.parse(line);
+        if (row.type === "permission") return finish(Boolean(row.granted));
+      } catch {}
+    });
+    child.once("close", () => finish(false));
+    setTimeout(() => finish(false), 3000);
+  });
+}
 async function inputPreflight(prompt = false) {
-  const trusted = systemPreferences.isTrustedAccessibilityClient(prompt);
+  if (prompt) systemPreferences.isTrustedAccessibilityClient(true);
+  const trusted = await probeInputHelper();
   state.permissions.accessibility = trusted ? "granted" : "denied";
   if (!trusted) {
     setChannel(
@@ -952,11 +970,12 @@ async function recover() {
 }
 ipcMain.handle("recorder:get-status", () => pub());
 ipcMain.handle("recorder:request-accessibility", async () => {
-  let granted = systemPreferences.isTrustedAccessibilityClient(true);
+  systemPreferences.isTrustedAccessibilityClient(true);
+  let granted = await probeInputHelper();
   if (!granted) {
     await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    granted = systemPreferences.isTrustedAccessibilityClient(false);
+    granted = await probeInputHelper();
   }
   state.permissions.accessibility = granted ? "granted" : "denied";
   setChannel("input", granted ? "connected" : "permission_wait", granted ? "Accessibility権限を確認しました" : "Research Recorderを一覧へ追加してオンにし、アプリを再起動してください");
@@ -996,7 +1015,7 @@ ipcMain.handle("recorder:run-diagnostics", async () => {
       return { ok: !record.outputActive, warning: format !== "mkv", message: record.outputActive ? "既存のOBS録画が動作中です" : format === "mkv" ? "OBS WebSocket接続・MKV設定を確認しました" : `OBS WebSocket接続済み（録画時に${format}からMKVへ一時切替）`, detail: { websocketVersion: version.obsWebSocketVersion ?? null, obsVersion: version.obsVersion ?? null, recordActive: Boolean(record.outputActive), recordFormat: format, recordingFormat: "mkv", restoresOriginalFormat: true } };
     } catch (error) { return { ok: false, message: String(error), detail: {} }; }
   })();
-  const accessibility = systemPreferences.isTrustedAccessibilityClient(false);
+  const accessibility = await probeInputHelper();
   const input = await new Promise((resolve) => {
     if (!accessibility) return resolve({ ok: false, message: "Accessibility権限がありません", detail: {} });
     const child = spawn(helperPath, [], { stdio: ["ignore", "pipe", "pipe"] });
