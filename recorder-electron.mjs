@@ -951,6 +951,18 @@ async function recover() {
   }
 }
 ipcMain.handle("recorder:get-status", () => pub());
+ipcMain.handle("recorder:request-accessibility", async () => {
+  let granted = systemPreferences.isTrustedAccessibilityClient(true);
+  if (!granted) {
+    await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    granted = systemPreferences.isTrustedAccessibilityClient(false);
+  }
+  state.permissions.accessibility = granted ? "granted" : "denied";
+  setChannel("input", granted ? "connected" : "permission_wait", granted ? "Accessibility権限を確認しました" : "Research Recorderを一覧へ追加してオンにし、アプリを再起動してください");
+  await persistStatus();
+  return { granted, appPath: app.getPath("exe") };
+});
 ipcMain.handle("recorder:run-diagnostics", async () => {
   if (["recording", "starting", "stopping"].includes(state.state))
     throw new Error("記録中は事前テストを実行できません");

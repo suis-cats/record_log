@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("researchRecorder", {
   openFolder: () => ipcRenderer.invoke("recorder:open-folder"),
   mediaPreflight: (v) => ipcRenderer.invoke("recorder:media-preflight", v),
   runDiagnostics: () => ipcRenderer.invoke("recorder:run-diagnostics"),
+  requestAccessibility: () => ipcRenderer.invoke("recorder:request-accessibility"),
   mediaReady: (v) => ipcRenderer.invoke("recorder:media-ready", v),
   mediaFailed: (v) => ipcRenderer.invoke("recorder:media-failed", v),
   mediaRecovered: (v) => ipcRenderer.invoke("recorder:media-recovered", v),
