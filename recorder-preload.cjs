@@ -1,1 +1,21 @@
-const{contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('researchRecorder',{getStatus:()=>ipcRenderer.invoke('recorder:get-status'),saveConfig:v=>ipcRenderer.invoke('recorder:save-config',v),start:()=>ipcRenderer.invoke('recorder:start'),stop:()=>ipcRenderer.invoke('recorder:stop'),quit:()=>ipcRenderer.invoke('recorder:quit'),openFolder:()=>ipcRenderer.invoke('recorder:open-folder'),mediaPreflight:v=>ipcRenderer.invoke('recorder:media-preflight',v),mediaReady:v=>ipcRenderer.invoke('recorder:media-ready',v),mediaFailed:v=>ipcRenderer.invoke('recorder:media-failed',v),cameraChunk:v=>ipcRenderer.invoke('recorder:camera-chunk',v),rotateCamera:v=>ipcRenderer.invoke('recorder:rotate-camera',v),audioChunk:v=>ipcRenderer.invoke('recorder:audio-chunk',v),onCommand:cb=>{const h=(_e,v)=>cb(v);ipcRenderer.on('recorder:command',h);return()=>ipcRenderer.removeListener('recorder:command',h)}});
+const { contextBridge, ipcRenderer } = require("electron");
+contextBridge.exposeInMainWorld("researchRecorder", {
+  getStatus: () => ipcRenderer.invoke("recorder:get-status"),
+  saveConfig: (v) => ipcRenderer.invoke("recorder:save-config", v),
+  start: () => ipcRenderer.invoke("recorder:start"),
+  stop: () => ipcRenderer.invoke("recorder:stop"),
+  quit: () => ipcRenderer.invoke("recorder:quit"),
+  openFolder: () => ipcRenderer.invoke("recorder:open-folder"),
+  mediaPreflight: (v) => ipcRenderer.invoke("recorder:media-preflight", v),
+  mediaReady: (v) => ipcRenderer.invoke("recorder:media-ready", v),
+  mediaFailed: (v) => ipcRenderer.invoke("recorder:media-failed", v),
+  mediaRecovered: (v) => ipcRenderer.invoke("recorder:media-recovered", v),
+  cameraChunk: (v) => ipcRenderer.invoke("recorder:camera-chunk", v),
+  rotateCamera: (v) => ipcRenderer.invoke("recorder:rotate-camera", v),
+  audioChunk: (v) => ipcRenderer.invoke("recorder:audio-chunk", v),
+  onCommand: (cb) => {
+    const h = (_e, v) => cb(v);
+    ipcRenderer.on("recorder:command", h);
+    return () => ipcRenderer.removeListener("recorder:command", h);
+  },
+});

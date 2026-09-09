@@ -1,15 +1,440 @@
-import './recorder.css';declare global{interface Window{researchRecorder:any}}const api=window.researchRecorder,$=<T extends HTMLElement=HTMLElement>(id:string)=>document.getElementById(id)as T;
-document.querySelector('#app')!.innerHTML=`<main><header><div><span class="eyebrow">RAW DATA CAPTURE · macOS</span><h1>研究レコーダー</h1><p class="muted">分析を行わず、研究用の原データだけを保存します。</p></div><div><div class="statusline" id="overall">準備中</div><div class="muted" id="elapsed">00:00:00</div></div></header><section class="hero"><div class="preview"><video id="preview" autoplay muted playsinline></video></div><div class="cards" id="cards"></div></section><div class="toolbar"><button class="primary" id="start">記録開始</button><button id="stop">停止して保存</button><button id="folder">保存先を開く</button><button class="danger" id="quit">終了</button></div><section class="panel"><h2>記録設定</h2><div class="settings"><label>参加者ID<input id="participant"></label><label>マイク<select id="microphone"></select></label><label class="wide">保存先<input id="storage"></label><label>カメラ<select id="camera"></select></label><label>OBS WebSocketパスワード<input id="obsPassword" type="password" placeholder="変更時のみ入力"></label></div><div class="toolbar"><button id="permissions">カメラ・マイクを許可</button><button id="save">設定を保存</button><span class="muted" id="message"></span></div><p class="muted">操作ログにはキー内容・キーコード・入力文字列・クリップボードを保存しません。Accessibilityはシステム設定の「プライバシーとセキュリティ」で許可します。</p></section><section class="panel"><h2>音声レベル</h2><div class="meter"><i id="level"></i></div></section><section class="panel"><h2>記録イベント</h2><div class="events" id="events"></div></section></main>`;
-let cameraStream:MediaStream|null=null,audioStream:MediaStream|null=null,recorder:MediaRecorder|null=null,audioContext:AudioContext|null=null,processor:AudioWorkletNode|null=null,recording=false,segmentTimer=0,cameraStart=0,sessionId:string|null=null;
-const labels:any={activitywatch:'ActivityWatch',input:'操作ログ',obs:'OBS画面録画',camera:'カメラ単独映像',audio:'マイク音声'},states:any={connected:'接続済み',recording:'データ保存中',permission_wait:'権限待ち',disconnected:'切断',reconnecting:'再接続中',quality_low:'指定品質未満',save_failed:'保存失敗',waiting:'待機'};
-function render(s:any){$('overall').textContent=s.state==='recording'?'記録中':s.state==='stopping'?'保存中':s.state==='failed'?'保存失敗':'準備待ち';$('overall').className=`statusline ${s.state==='recording'?'ok':s.state==='failed'?'bad':'warn'}`;const sec=s.startedAtMs?Math.floor((Date.now()-s.startedAtMs)/1000):0;$('elapsed').textContent=`${String(Math.floor(sec/3600)).padStart(2,'0')}:${String(Math.floor(sec%3600/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;$('cards').replaceChildren(...Object.entries(s.channels).map(([k,v]:any)=>{const e=document.createElement('div');e.className='card';e.innerHTML=`<div><span>${labels[k]}</span><strong>${states[v.state]??v.state}</strong></div><small></small>`;e.querySelector('small')!.textContent=v.detail??'';return e}));$('events').replaceChildren(...s.events.slice(-30).reverse().map((v:any)=>{const e=document.createElement('div');e.textContent=`${new Date(v.at).toLocaleTimeString()} ${v.type}${v.reason?' · '+v.reason:''}`;return e}));$('message').textContent=s.message??'';$<HTMLButtonElement>('stop').disabled=s.state!=='recording';$<HTMLButtonElement>('start').disabled=['recording','starting','stopping'].includes(s.state)}
-async function devices(){const all=await navigator.mediaDevices.enumerateDevices(),mics=all.filter(x=>x.kind==='audioinput'),cams=all.filter(x=>x.kind==='videoinput'&&/obs.*virtual camera/i.test(x.label));const fill=(id:string,list:MediaDeviceInfo[],empty:string)=>{const s=$<HTMLSelectElement>(id),old=s.value;s.replaceChildren(...(list.length?list.map(x=>new Option(x.label||empty,x.deviceId)):[new Option(empty,'')]));if([...s.options].some(x=>x.value===old))s.value=old};fill('microphone',mics,'マイクが見つかりません');fill('camera',cams,'OBS Virtual Cameraが見つかりません');return{mics,cams}}
-async function permissionProbe(){let mic=false,cam=false;const d=await devices();try{if(d.mics[0]){const s=await navigator.mediaDevices.getUserMedia({audio:{deviceId:{exact:$<HTMLSelectElement>('microphone').value||d.mics[0].deviceId}},video:false});s.getTracks().forEach(x=>x.stop());mic=true}}catch{}try{if(d.cams[0]){const s=await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:$<HTMLSelectElement>('camera').value||d.cams[0].deviceId}},audio:false});s.getTracks().forEach(x=>x.stop());cam=true}}catch{}await api.mediaPreflight({camera:cam,audio:mic,cameraPermission:cam?'granted':'denied',microphonePermission:mic?'granted':'denied',cameraDetail:cam?'OBS Virtual Camera接続済み':'OBS Virtual Cameraまたは権限を確認してください',audioDetail:mic?'マイク接続済み':'マイク権限を確認してください',devices:{microphones:d.mics.map(x=>({deviceId:x.deviceId,label:x.label})),virtualCameras:d.cams.map(x=>({deviceId:x.deviceId,label:x.label}))}});return cam&&mic}
-function pcm16(input:Float32Array){const b=new ArrayBuffer(input.length*2),v=new DataView(b);for(let i=0;i<input.length;i++)v.setInt16(i*2,Math.round(Math.max(-1,Math.min(1,input[i]))*(input[i]<0?32768:32767)),true);return new Uint8Array(b)}
-async function startCamera(ms:number){if(!cameraStream||!recording)return;const mime=['video/webm;codecs=vp8','video/webm'].find(MediaRecorder.isTypeSupported);if(!mime)throw new Error('WebM録画が利用できません');recorder=new MediaRecorder(cameraStream,{mimeType:mime,videoBitsPerSecond:2_500_000});cameraStart=Date.now();recorder.ondataavailable=async e=>{if(e.data.size)await api.cameraChunk({sessionId,utcMs:Date.now(),monotonicMs:performance.now(),bytes:new Uint8Array(await e.data.arrayBuffer())})};recorder.start(1000);segmentTimer=window.setTimeout(async()=>{if(recorder?.state==='recording'){await stopCamera();await api.rotateCamera({mimeType:mime,plannedBoundaryUtcMs:cameraStart+ms});if(recording)await startCamera(ms)}},ms)}
-async function stopCamera(){clearTimeout(segmentTimer);if(recorder&&recorder.state!=='inactive')await new Promise<void>(r=>{recorder!.addEventListener('stop',()=>r(),{once:true});recorder!.stop()});recorder=null}
-async function startMedia(s:any){if(recording)return;sessionId=s.sessionId;const d=await devices(),cameraId=s.config.cameraDeviceId||d.cams[0]?.deviceId,micId=s.config.microphoneDeviceId||d.mics[0]?.deviceId;if(!cameraId||!micId)throw new Error('選択した機器が見つかりません');cameraStream=await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:cameraId},width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30}},audio:false});audioStream=await navigator.mediaDevices.getUserMedia({video:false,audio:{deviceId:{exact:micId},sampleRate:48000,channelCount:1,echoCancellation:false,noiseSuppression:false,autoGainControl:false}});const video=$<HTMLVideoElement>('preview');video.srcObject=cameraStream;await video.play();recording=true;await startCamera(s.config.segmentMs);audioContext=new AudioContext({sampleRate:48000});await audioContext.audioWorklet.addModule(new URL('../pcm-worklet.js',location.href));const source=audioContext.createMediaStreamSource(audioStream);processor=new AudioWorkletNode(audioContext,'pcm-capture');processor.port.onmessage=e=>{if(!recording)return;const a=e.data as Float32Array,level=Math.sqrt(a.reduce((n,x)=>n+x*x,0)/a.length);$('level').style.width=`${Math.min(100,level*500)}%`;api.audioChunk({sessionId,utcMs:Date.now(),monotonicMs:performance.now(),bytes:pcm16(a)})};source.connect(processor);processor.connect(audioContext.destination);const cs=cameraStream.getVideoTracks()[0].getSettings();await api.mediaReady({camera:{label:cameraStream.getVideoTracks()[0].label,settings:cs,qualityMet:(cs.width??0)>=1280&&(cs.height??0)>=720&&(cs.frameRate??0)>=29,detail:`${cs.width}×${cs.height} ${cs.frameRate}fps`},audio:{label:audioStream.getAudioTracks()[0].label,settings:audioStream.getAudioTracks()[0].getSettings(),qualityMet:audioContext.sampleRate===48000,detail:`${audioContext.sampleRate}Hz mono PCM16`}});for(const track of [...cameraStream.getTracks(),...audioStream.getTracks()])track.onended=()=>api.mediaFailed({channel:track.kind==='video'?'camera':'audio',reason:'device_disconnected'})}
-async function stopMedia(){recording=false;await stopCamera();processor?.disconnect();processor=null;if(audioContext)await audioContext.close().catch(()=>{});audioContext=null;cameraStream?.getTracks().forEach(x=>x.stop());audioStream?.getTracks().forEach(x=>x.stop());cameraStream=audioStream=null;$<HTMLVideoElement>('preview').srcObject=null}
-api.onCommand(async(c:string)=>{if(c==='probe-media')await permissionProbe();if(c==='start-media')try{await startMedia(await api.getStatus())}catch(e){await api.mediaFailed({channel:'camera',reason:String(e)})}if(c==='stop-media')await stopMedia()});
-$('permissions').onclick=()=>permissionProbe();$('save').onclick=async()=>{const m=$<HTMLSelectElement>('microphone'),c=$<HTMLSelectElement>('camera');await api.saveConfig({participantId:$<HTMLInputElement>('participant').value,storageRoot:$<HTMLInputElement>('storage').value,microphoneDeviceId:m.value||null,microphoneLabel:m.selectedOptions[0]?.text,cameraDeviceId:c.value||null,cameraLabel:c.selectedOptions[0]?.text,obsPassword:$<HTMLInputElement>('obsPassword').value});$<HTMLInputElement>('obsPassword').value='';await permissionProbe()};$('start').onclick=()=>api.start();$('stop').onclick=()=>api.stop();$('quit').onclick=()=>api.quit();$('folder').onclick=()=>api.openFolder();
-void(async()=>{const s=await api.getStatus();$<HTMLInputElement>('participant').value=s.config.participantId;$<HTMLInputElement>('storage').value=s.config.storageRoot;render(s);await devices().catch(()=>{});setInterval(async()=>render(await api.getStatus()),1000)})();
+import "./recorder.css";
+declare global {
+  interface Window {
+    researchRecorder: any;
+  }
+}
+const api = window.researchRecorder,
+  $ = <T extends HTMLElement = HTMLElement>(id: string) =>
+    document.getElementById(id) as T;
+document.querySelector("#app")!.innerHTML =
+  `<main><header><div><span class="eyebrow">RAW DATA CAPTURE · macOS</span><h1>研究レコーダー</h1><p class="muted">分析を行わず、研究用の原データだけを保存します。</p></div><div><div class="statusline" id="overall">準備中</div><div class="muted" id="elapsed">00:00:00</div></div></header><section class="hero"><div class="preview"><video id="preview" autoplay muted playsinline></video></div><div class="cards" id="cards"></div></section><div class="toolbar"><button class="primary" id="start">記録開始</button><button id="stop">停止して保存</button><button id="folder">保存先を開く</button><button class="danger" id="quit">終了</button></div><section class="panel"><h2>記録設定</h2><div class="settings"><label>参加者ID<input id="participant"></label><label>マイク<select id="microphone"></select></label><label class="wide">保存先<input id="storage"></label><label>カメラ<select id="camera"></select></label><label>OBS WebSocketパスワード<input id="obsPassword" type="password" placeholder="変更時のみ入力"></label></div><div class="toolbar"><button id="permissions">カメラ・マイクを許可</button><button id="save">設定を保存</button><span class="muted" id="message"></span></div><p class="muted">操作ログにはキー内容・キーコード・入力文字列・クリップボードを保存しません。Accessibilityはシステム設定の「プライバシーとセキュリティ」で許可します。</p></section><section class="panel"><h2>音声レベル</h2><div class="meter"><i id="level"></i></div></section><section class="panel"><h2>記録イベント</h2><div class="events" id="events"></div></section></main>`;
+let cameraStream: MediaStream | null = null,
+  audioStream: MediaStream | null = null,
+  recorder: MediaRecorder | null = null,
+  audioContext: AudioContext | null = null,
+  processor: AudioWorkletNode | null = null,
+  recording = false,
+  segmentTimer = 0,
+  cameraStart = 0,
+  sessionId: string | null = null,
+  activeCameraId: string | null = null,
+  activeMicId: string | null = null,
+  activeSegmentMs = 600_000,
+  cameraChunkQueue: Promise<unknown> = Promise.resolve();
+const reconnectTimers: Record<"camera" | "audio", number | null> = {
+  camera: null,
+  audio: null,
+};
+const labels: any = {
+    activitywatch: "ActivityWatch",
+    input: "操作ログ",
+    obs: "OBS画面録画",
+    camera: "カメラ単独映像",
+    audio: "マイク音声",
+  },
+  states: any = {
+    connected: "接続済み",
+    recording: "データ保存中",
+    permission_wait: "権限待ち",
+    disconnected: "切断",
+    reconnecting: "再接続中",
+    quality_low: "指定品質未満",
+    save_failed: "保存失敗",
+    waiting: "待機",
+  };
+function render(s: any) {
+  $("overall").textContent =
+    s.state === "recording"
+      ? "記録中"
+      : s.state === "stopping"
+        ? "保存中"
+        : s.state === "failed"
+          ? "保存失敗"
+          : "準備待ち";
+  $("overall").className =
+    `statusline ${s.state === "recording" ? "ok" : s.state === "failed" ? "bad" : "warn"}`;
+  const sec = s.startedAtMs
+    ? Math.floor((Date.now() - s.startedAtMs) / 1000)
+    : 0;
+  $("elapsed").textContent =
+    `${String(Math.floor(sec / 3600)).padStart(2, "0")}:${String(Math.floor((sec % 3600) / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
+  $("cards").replaceChildren(
+    ...Object.entries(s.channels).map(([k, v]: any) => {
+      const e = document.createElement("div");
+      e.className = "card";
+      e.innerHTML = `<div><span>${labels[k]}</span><strong>${states[v.state] ?? v.state}</strong></div><small></small>`;
+      e.querySelector("small")!.textContent = v.detail ?? "";
+      return e;
+    }),
+  );
+  $("events").replaceChildren(
+    ...s.events
+      .slice(-30)
+      .reverse()
+      .map((v: any) => {
+        const e = document.createElement("div");
+        e.textContent = `${new Date(v.at).toLocaleTimeString()} ${v.type}${v.reason ? " · " + v.reason : ""}`;
+        return e;
+      }),
+  );
+  $("message").textContent = s.message ?? "";
+  $<HTMLButtonElement>("stop").disabled = s.state !== "recording";
+  $<HTMLButtonElement>("start").disabled = [
+    "recording",
+    "starting",
+    "stopping",
+  ].includes(s.state);
+}
+async function devices() {
+  const all = await navigator.mediaDevices.enumerateDevices(),
+    mics = all.filter((x) => x.kind === "audioinput"),
+    cams = all.filter(
+      (x) => x.kind === "videoinput" && /obs.*virtual camera/i.test(x.label),
+    );
+  const fill = (id: string, list: MediaDeviceInfo[], empty: string) => {
+    const s = $<HTMLSelectElement>(id),
+      old = s.value;
+    s.replaceChildren(
+      ...(list.length
+        ? list.map((x) => new Option(x.label || empty, x.deviceId))
+        : [new Option(empty, "")]),
+    );
+    if ([...s.options].some((x) => x.value === old)) s.value = old;
+  };
+  fill("microphone", mics, "マイクが見つかりません");
+  fill("camera", cams, "OBS Virtual Cameraが見つかりません");
+  return { mics, cams };
+}
+async function permissionProbe() {
+  let mic = false,
+    cam = false;
+  const d = await devices();
+  try {
+    if (d.mics[0]) {
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: {
+            exact:
+              $<HTMLSelectElement>("microphone").value || d.mics[0].deviceId,
+          },
+        },
+        video: false,
+      });
+      s.getTracks().forEach((x) => x.stop());
+      mic = true;
+    }
+  } catch {}
+  try {
+    if (d.cams[0]) {
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: {
+            exact: $<HTMLSelectElement>("camera").value || d.cams[0].deviceId,
+          },
+        },
+        audio: false,
+      });
+      s.getTracks().forEach((x) => x.stop());
+      cam = true;
+    }
+  } catch {}
+  await api.mediaPreflight({
+    camera: cam,
+    audio: mic,
+    cameraPermission: cam ? "granted" : "denied",
+    microphonePermission: mic ? "granted" : "denied",
+    cameraDetail: cam
+      ? "OBS Virtual Camera接続済み"
+      : "OBS Virtual Cameraまたは権限を確認してください",
+    audioDetail: mic ? "マイク接続済み" : "マイク権限を確認してください",
+    devices: {
+      microphones: d.mics.map((x) => ({
+        deviceId: x.deviceId,
+        label: x.label,
+      })),
+      virtualCameras: d.cams.map((x) => ({
+        deviceId: x.deviceId,
+        label: x.label,
+      })),
+    },
+  });
+  return cam && mic;
+}
+function pcm16(input: Float32Array) {
+  const b = new ArrayBuffer(input.length * 2),
+    v = new DataView(b);
+  for (let i = 0; i < input.length; i++)
+    v.setInt16(
+      i * 2,
+      Math.round(
+        Math.max(-1, Math.min(1, input[i])) * (input[i] < 0 ? 32768 : 32767),
+      ),
+      true,
+    );
+  return new Uint8Array(b);
+}
+async function startCamera(ms: number) {
+  if (!cameraStream || !recording) return;
+  const mime = ["video/webm;codecs=vp8", "video/webm"].find(
+    MediaRecorder.isTypeSupported,
+  );
+  if (!mime) throw new Error("WebM録画が利用できません");
+  recorder = new MediaRecorder(cameraStream, {
+    mimeType: mime,
+    videoBitsPerSecond: 2_500_000,
+  });
+  cameraStart = Date.now();
+  cameraChunkQueue = Promise.resolve();
+  recorder.ondataavailable = (e) => {
+    if (e.data.size)
+      cameraChunkQueue = cameraChunkQueue.then(async () =>
+        api.cameraChunk({
+          sessionId,
+          utcMs: Date.now(),
+          monotonicMs: performance.now(),
+          bytes: new Uint8Array(await e.data.arrayBuffer()),
+        }),
+      );
+  };
+  recorder.start(1000);
+  segmentTimer = window.setTimeout(async () => {
+    if (recorder?.state === "recording") {
+      await stopCamera();
+      await api.rotateCamera({
+        mimeType: mime,
+        plannedBoundaryUtcMs: cameraStart + ms,
+      });
+      if (recording) await startCamera(ms);
+    }
+  }, ms);
+}
+async function stopCamera() {
+  clearTimeout(segmentTimer);
+  if (recorder && recorder.state !== "inactive")
+    await new Promise<void>((r) => {
+      recorder!.addEventListener("stop", () => r(), { once: true });
+      recorder!.stop();
+    });
+  await cameraChunkQueue;
+  recorder = null;
+}
+async function setupAudioCapture(stream: MediaStream) {
+  audioContext = new AudioContext({ sampleRate: 48000 });
+  await audioContext.audioWorklet.addModule(
+    new URL("../pcm-worklet.js", location.href),
+  );
+  const source = audioContext.createMediaStreamSource(stream);
+  processor = new AudioWorkletNode(audioContext, "pcm-capture");
+  processor.port.onmessage = (e) => {
+    if (!recording) return;
+    const samples = e.data as Float32Array;
+    const level = Math.sqrt(
+      samples.reduce((total, value) => total + value * value, 0) /
+        samples.length,
+    );
+    $("level").style.width = `${Math.min(100, level * 500)}%`;
+    void api.audioChunk({
+      sessionId,
+      utcMs: Date.now(),
+      monotonicMs: performance.now(),
+      bytes: pcm16(samples),
+    });
+  };
+  source.connect(processor);
+  processor.connect(audioContext.destination);
+}
+function scheduleReconnect(kind: "camera" | "audio") {
+  if (!recording || reconnectTimers[kind] !== null) return;
+  void api.mediaFailed({ channel: kind, reason: "device_disconnected" });
+  reconnectTimers[kind] = window.setTimeout(async () => {
+    reconnectTimers[kind] = null;
+    try {
+      if (kind === "camera") {
+        await stopCamera();
+        cameraStream?.getTracks().forEach((track) => {
+          track.onended = null;
+          track.stop();
+        });
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: { exact: activeCameraId! },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 },
+          },
+          audio: false,
+        });
+        cameraStream.getVideoTracks()[0].onended = () =>
+          scheduleReconnect("camera");
+        $<HTMLVideoElement>("preview").srcObject = cameraStream;
+        await $<HTMLVideoElement>("preview").play();
+        await startCamera(activeSegmentMs);
+      } else {
+        processor?.disconnect();
+        processor = null;
+        if (audioContext) await audioContext.close().catch(() => {});
+        audioContext = null;
+        audioStream?.getTracks().forEach((track) => {
+          track.onended = null;
+          track.stop();
+        });
+        audioStream = await navigator.mediaDevices.getUserMedia({
+          video: false,
+          audio: {
+            deviceId: { exact: activeMicId! },
+            sampleRate: 48000,
+            channelCount: 1,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+        audioStream.getAudioTracks()[0].onended = () =>
+          scheduleReconnect("audio");
+        await setupAudioCapture(audioStream);
+      }
+      await api.mediaRecovered({ channel: kind });
+    } catch (error) {
+      await api.mediaFailed({ channel: kind, reason: String(error) });
+      scheduleReconnect(kind);
+    }
+  }, 30_000);
+}
+async function startMedia(s: any) {
+  if (recording) return;
+  sessionId = s.sessionId;
+  const d = await devices(),
+    cameraId = s.config.cameraDeviceId || d.cams[0]?.deviceId,
+    micId = s.config.microphoneDeviceId || d.mics[0]?.deviceId;
+  if (!cameraId || !micId) throw new Error("選択した機器が見つかりません");
+  activeCameraId = cameraId;
+  activeMicId = micId;
+  activeSegmentMs = s.config.segmentMs;
+  cameraStream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      deviceId: { exact: cameraId },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30 },
+    },
+    audio: false,
+  });
+  audioStream = await navigator.mediaDevices.getUserMedia({
+    video: false,
+    audio: {
+      deviceId: { exact: micId },
+      sampleRate: 48000,
+      channelCount: 1,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    },
+  });
+  const video = $<HTMLVideoElement>("preview");
+  video.srcObject = cameraStream;
+  await video.play();
+  recording = true;
+  await startCamera(s.config.segmentMs);
+  audioContext = new AudioContext({ sampleRate: 48000 });
+  await audioContext.audioWorklet.addModule(
+    new URL("../pcm-worklet.js", location.href),
+  );
+  const source = audioContext.createMediaStreamSource(audioStream);
+  processor = new AudioWorkletNode(audioContext, "pcm-capture");
+  processor.port.onmessage = (e) => {
+    if (!recording) return;
+    const a = e.data as Float32Array,
+      level = Math.sqrt(a.reduce((n, x) => n + x * x, 0) / a.length);
+    $("level").style.width = `${Math.min(100, level * 500)}%`;
+    api.audioChunk({
+      sessionId,
+      utcMs: Date.now(),
+      monotonicMs: performance.now(),
+      bytes: pcm16(a),
+    });
+  };
+  source.connect(processor);
+  processor.connect(audioContext.destination);
+  const cs = cameraStream.getVideoTracks()[0].getSettings();
+  await api.mediaReady({
+    camera: {
+      label: cameraStream.getVideoTracks()[0].label,
+      settings: cs,
+      qualityMet:
+        (cs.width ?? 0) >= 1280 &&
+        (cs.height ?? 0) >= 720 &&
+        (cs.frameRate ?? 0) >= 29,
+      detail: `${cs.width}×${cs.height} ${cs.frameRate}fps`,
+    },
+    audio: {
+      label: audioStream.getAudioTracks()[0].label,
+      settings: audioStream.getAudioTracks()[0].getSettings(),
+      qualityMet: audioContext.sampleRate === 48000,
+      detail: `${audioContext.sampleRate}Hz mono PCM16`,
+    },
+  });
+  cameraStream.getVideoTracks()[0].onended = () =>
+    scheduleReconnect("camera");
+  audioStream.getAudioTracks()[0].onended = () => scheduleReconnect("audio");
+}
+async function stopMedia() {
+  recording = false;
+  for (const kind of ["camera", "audio"] as const) {
+    if (reconnectTimers[kind] !== null) clearTimeout(reconnectTimers[kind]!);
+    reconnectTimers[kind] = null;
+  }
+  await stopCamera();
+  processor?.disconnect();
+  processor = null;
+  if (audioContext) await audioContext.close().catch(() => {});
+  audioContext = null;
+  cameraStream?.getTracks().forEach((x) => {
+    x.onended = null;
+    x.stop();
+  });
+  audioStream?.getTracks().forEach((x) => {
+    x.onended = null;
+    x.stop();
+  });
+  cameraStream = audioStream = null;
+  $<HTMLVideoElement>("preview").srcObject = null;
+}
+api.onCommand(async (c: string) => {
+  if (c === "probe-media") await permissionProbe();
+  if (c === "start-media")
+    try {
+      await startMedia(await api.getStatus());
+    } catch (e) {
+      await api.mediaFailed({ channel: "camera", reason: String(e) });
+    }
+  if (c === "stop-media") await stopMedia();
+});
+$("permissions").onclick = () => permissionProbe();
+$("save").onclick = async () => {
+  const m = $<HTMLSelectElement>("microphone"),
+    c = $<HTMLSelectElement>("camera");
+  await api.saveConfig({
+    participantId: $<HTMLInputElement>("participant").value,
+    storageRoot: $<HTMLInputElement>("storage").value,
+    microphoneDeviceId: m.value || null,
+    microphoneLabel: m.selectedOptions[0]?.text,
+    cameraDeviceId: c.value || null,
+    cameraLabel: c.selectedOptions[0]?.text,
+    obsPassword: $<HTMLInputElement>("obsPassword").value,
+  });
+  $<HTMLInputElement>("obsPassword").value = "";
+  await permissionProbe();
+};
+$("start").onclick = () => api.start();
+$("stop").onclick = () => api.stop();
+$("quit").onclick = () => api.quit();
+$("folder").onclick = () => api.openFolder();
+void (async () => {
+  const s = await api.getStatus();
+  $<HTMLInputElement>("participant").value = s.config.participantId;
+  $<HTMLInputElement>("storage").value = s.config.storageRoot;
+  render(s);
+  await devices().catch(() => {});
+  setInterval(async () => render(await api.getStatus()), 1000);
+})();
