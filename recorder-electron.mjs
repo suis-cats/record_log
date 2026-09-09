@@ -97,6 +97,8 @@ let cameraHandle = null,
 let obsOwned = false,
   obsOwnershipUncertain = false,
   obsOriginalDir = null,
+  obsOriginalFormat = null,
+  obsFormatKey = null,
   obsCurrentPath = null,
   obsSegmentStart = null,
   virtualCamOwned = false,
@@ -349,10 +351,15 @@ async function startObs() {
   const current = await obsRequest("GetRecordStatus");
   if (current.outputActive)
     throw new Error("既存のOBS録画が終了するまで待機します");
-  const format = String(
-    await profile("RecFormat2").catch(() => profile("RecFormat")),
-  ).toLowerCase();
-  if (format !== "mkv") throw new Error("OBSの録画形式をMKVに設定してください");
+  let format;
+  try { obsFormatKey = "RecFormat2"; format = String(await profile(obsFormatKey)).toLowerCase(); }
+  catch { obsFormatKey = "RecFormat"; format = String(await profile(obsFormatKey)).toLowerCase(); }
+  if (format !== "mkv") {
+    obsOriginalFormat = format;
+    await profile(obsFormatKey, "mkv");
+    format = String(await profile(obsFormatKey)).toLowerCase();
+    if (format !== "mkv") throw new Error("OBSの録画形式をMKVへ変更できませんでした");
+  }
   const vc = await obsRequest("GetVirtualCamStatus");
   if (!vc.outputActive) {
     await obsRequest("StartVirtualCam");
@@ -406,6 +413,16 @@ async function stopObs() {
   if (!obsOwned || obsOwnershipUncertain) {
     if (obsOwnershipUncertain)
       event("obs_stop_skipped", { reason: "ownership_uncertain" });
+    if (obsOriginalDir)
+      await obsRequest("SetRecordDirectory", { recordDirectory: obsOriginalDir })
+        .catch(() => profile("RecFilePath", obsOriginalDir));
+    if (obsOriginalFormat && obsFormatKey)
+      await profile(obsFormatKey, obsOriginalFormat).catch(() => {});
+    obsOriginalDir = obsOriginalFormat = obsFormatKey = null;
+    if (virtualCamOwned) {
+      await obsRequest("StopVirtualCam").catch(() => {});
+      virtualCamOwned = false;
+    }
     return;
   }
   const start = obsSegmentStart ?? clockAnchor(),
@@ -420,6 +437,11 @@ async function stopObs() {
     await obsRequest("SetRecordDirectory", {
       recordDirectory: obsOriginalDir,
     }).catch(() => profile("RecFilePath", obsOriginalDir));
+  if (obsOriginalFormat && obsFormatKey) {
+    await profile(obsFormatKey, obsOriginalFormat).catch(() => {});
+    obsOriginalFormat = obsFormatKey = null;
+  }
+  obsOriginalDir = null;
   if (virtualCamOwned) {
     await obsRequest("StopVirtualCam").catch(() => {});
     virtualCamOwned = false;
@@ -934,6 +956,9 @@ ipcMain.handle("recorder:run-diagnostics", async () => {
     throw new Error("記録中は事前テストを実行できません");
   const checkedAt = new Date().toISOString();
   const activitywatch = await (async () => {
+    const apps = await locateApps();
+    let lastError;
+    for (let attempt = 0; attempt < 6; attempt++) {
     try {
       const buckets = await aw("/buckets");
       const ids = Object.keys(buckets).filter((id) => /aw-watcher-(window|afk)/.test(id));
@@ -943,14 +968,20 @@ ipcMain.handle("recorder:run-diagnostics", async () => {
         const rows = await aw(`/buckets/${encodeURIComponent(id)}/events?${q}`);
         detail[/window/.test(id) ? "window" : "afk"] = { bucketId: id, recentEvent: Array.isArray(rows) && rows.length > 0, latestTimestamp: rows?.[0]?.timestamp ?? null };
       }
-      return { ok: Boolean(detail.window?.recentEvent && detail.afk?.recentEvent), message: detail.window && detail.afk ? "window/AFK watcherへ接続しました" : "windowまたはAFK watcherが見つかりません", detail };
-    } catch (error) { return { ok: false, message: String(error), detail: {} }; }
+      if (detail.window?.recentEvent && detail.afk?.recentEvent)
+        return { ok: true, message: "window/AFK watcherへ接続しました", detail };
+      lastError = new Error("windowまたはAFK watcherから直近イベントを取得できません");
+    } catch (error) { lastError = error; }
+      if (attempt === 0) launch(apps.aw);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    return { ok: false, message: String(lastError), detail: {} };
   })();
   const obs = await (async () => {
     try {
       const version = await obsRequest("GetVersion"), record = await obsRequest("GetRecordStatus");
       const format = String(await profile("RecFormat2").catch(() => profile("RecFormat"))).toLowerCase();
-      return { ok: format === "mkv" && !record.outputActive, message: record.outputActive ? "既存のOBS録画が動作中です" : format === "mkv" ? "OBS WebSocket接続・MKV設定を確認しました" : `録画形式は${format}です（MKVが必要）`, detail: { websocketVersion: version.obsWebSocketVersion ?? null, obsVersion: version.obsVersion ?? null, recordActive: Boolean(record.outputActive), recordFormat: format } };
+      return { ok: !record.outputActive, warning: format !== "mkv", message: record.outputActive ? "既存のOBS録画が動作中です" : format === "mkv" ? "OBS WebSocket接続・MKV設定を確認しました" : `OBS WebSocket接続済み（録画時に${format}からMKVへ一時切替）`, detail: { websocketVersion: version.obsWebSocketVersion ?? null, obsVersion: version.obsVersion ?? null, recordActive: Boolean(record.outputActive), recordFormat: format, recordingFormat: "mkv", restoresOriginalFormat: true } };
     } catch (error) { return { ok: false, message: String(error), detail: {} }; }
   })();
   const accessibility = systemPreferences.isTrustedAccessibilityClient(false);
