@@ -25,7 +25,7 @@ npm install
 npm run recorder
 ~~~
 
-初回画面で参加者ID、保存先、マイク、OBS Virtual Camera、OBS WebSocketパスワードを設定します。保存先の初期値は ~/Documents/research-recordings です。すべての系統が準備できると自動開始します。
+初回画面で参加者ID、保存先、マイク、OBS Virtual Camera、OBS WebSocketパスワードを設定します。保存先の初期値は ~/Documents/research-recordings です。設定保存後は待機し、「計測前テスト」で全系統を確認してから「記録開始」を押します。アプリ起動やテストによってOBS録画が自動開始されることはありません。
 
 カメラとマイクを許可します。操作ログは「システム設定 → プライバシーとセキュリティ → アクセシビリティ」でResearch Recorderを許可し、アプリを再起動します。OBSの画面収録権限はOBS自身へ付与します。
 

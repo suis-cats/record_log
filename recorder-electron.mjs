@@ -1222,13 +1222,10 @@ app
       app.quit();
       return;
     }
-    setInterval(() => {
-      if (saved && !manualStopped && state.state === "waiting")
-        startRecording().catch(emergency);
-    }, 5000).unref();
     if (saved) {
-      manualStopped = false;
-      startRecording();
+      manualStopped = true;
+      state.message = "計測前テストまたは記録開始を選択してください";
+      await persistStatus();
     }
     if (stopAfter)
       setTimeout(
