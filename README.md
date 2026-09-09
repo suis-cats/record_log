@@ -56,6 +56,8 @@ arm64成果物にはarm64のSwiftヘルパーとFFmpegを同梱し、Homebrewや
 - arm64パッケージ生成・smoke起動: 合格（アプリ本体、Swiftヘルパー、FFmpegがすべてarm64）
 - 生成WAVのffprobe確認: pcm_s16le、48000Hz、monoで合格
 - Accessibility未許可時のSwiftヘルパー: permission=falseを出力して終了することを確認
+- ActivityWatch実機: ローカルAPI接続とwindow/AFK bucketを確認
+- OBS実機: 32.1.2の起動と既存画面キャプチャソースを確認。WebSocketサーバーは無効、OBS Camera Extensionは未許可のため録画連携は未検証
 - 実マイク、Virtual Camera、OBS録画、10分境界: 権限と機器を使う手動検証が必要
 - Intel Mac/x64成果物: x64版FFmpegをこのarm64環境で用意できないため未生成・未検証
 - Developer ID署名、notarization: 未検証

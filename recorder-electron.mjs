@@ -1058,6 +1058,14 @@ app.on("before-quit", (e) => {
 });
 app.on("window-all-closed", () => {});
 app.on("activate", () => win?.show());
+const singleInstance = app.requestSingleInstanceLock();
+if (!singleInstance) app.quit();
+app.on("second-instance", () => {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+});
 app
   .whenReady()
   .then(async () => {
